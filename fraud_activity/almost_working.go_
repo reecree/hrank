@@ -1,0 +1,592 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"math/rand"
+	"strings"
+)
+
+var COUNT = 5
+
+type Node struct {
+	Parent     *Node
+	Left       *Node
+	Right      *Node
+	Value      int32
+	BalFactor  int8
+	ChildCount int
+}
+
+type AVL struct {
+	Root *Node
+	size int
+}
+
+func (n *Node) fixChildCount() {
+	n.ChildCount = 0
+	if n.Left != nil {
+		n.ChildCount = n.Left.ChildCount + 1
+	}
+	if n.Right != nil {
+		n.ChildCount += n.Right.ChildCount + 1
+	}
+}
+
+func print2DUtil(root *Node, space int, times int) {
+	if times > 15 {
+		return
+	}
+	// Base case
+	if root == nil {
+		return
+	}
+
+	// Increase distance between levels
+	space += COUNT
+
+	// Process right child first
+	print2DUtil(root.Right, space, times+1)
+
+	// Print current node after space
+	// count
+	//fmt.Println()
+	for i := COUNT; i < space; i++ {
+		fmt.Print(" ")
+	}
+	fmt.Printf("%d %d %d\n", root.Value, root.ChildCount, root.BalFactor)
+	//fmt.Println(root.ChildCount)
+
+	// Process left child
+	print2DUtil(root.Left, space, times+1)
+}
+
+// Wrapper over print2DUtil()
+func (avl *AVL) print2D() {
+	// Pass initial space count as 0
+	print2DUtil(avl.Root, 0, 0)
+	fmt.Println(avl.size)
+}
+
+func (avl *AVL) GetMedian() float32 {
+	size := avl.size
+	if size == 0 {
+		return -1
+	}
+	root := avl.Root
+
+	if size%2 == 0 {
+		b := root.getNode(size/2 - 1).Value
+		a := root.getNode(size / 2).Value
+		return 0.5 * float32(a+b)
+	}
+	return float32(root.getNode(size / 2).Value)
+}
+
+func (n *Node) getNode(index int) *Node {
+	current := n
+	for {
+		leftSubtreeSize := current.getLeftSubtreeSize()
+
+		if index == leftSubtreeSize {
+			return current
+		}
+
+		if index > leftSubtreeSize {
+			index -= (leftSubtreeSize + 1)
+			current = current.Right
+		} else {
+			current = current.Left
+		}
+	}
+}
+
+func (n *Node) getLeftSubtreeSize() int {
+	tmp := n.ChildCount
+
+	if n.Right != nil {
+		tmp -= (n.Right.ChildCount + 1)
+	}
+
+	return tmp
+}
+
+func (avl *AVL) Delete(val int32) {
+	if avl.Root == nil {
+		return
+	}
+	//fmt.Println(avl.Root.Value)
+	walk := avl.Root
+	var delete *Node
+	for walk != nil {
+		if walk.Value == val {
+			delete = walk
+			break
+		} else if val < walk.Value {
+			walk.ChildCount--
+			walk = walk.Left
+		} else {
+			walk.ChildCount--
+			walk = walk.Right
+		}
+	}
+	if delete == nil {
+		// TODO: Walk back up and update child counts
+		// This program shouldn't have misses though
+		return
+	}
+	avl.size--
+	N := delete
+	if delete.Left != nil && delete.Right != nil {
+		min := delete.findMin(true)
+		delete.Value = min.Value
+		N = min.delete()
+	} else if delete.Left != nil {
+		delete.replaceParent(delete.Left)
+		N = delete.Left
+	} else if delete.Right != nil {
+		delete.replaceParent(delete.Right)
+		N = delete.Right
+	} else {
+		delete.replaceParent(nil)
+	}
+	//fmt.Println(N.Value)
+	var G *Node
+	var b int8
+	for X := N.Parent; X != nil; X = G { // Loop (possibly up to the root)
+		G = X.Parent // Save parent of X around rotations
+		// BalanceFactor(X) has not yet been updated!
+		if N == X.Left { // the left subtree decreases
+			if X.BalFactor > 0 { // X is right-heavy
+				// ===> the temporary BalanceFactor(X) == +2
+				// ===> rebalancing is required.
+				Z := X.Right // Sibling of N (higher by 2)
+				b = Z.BalFactor
+				if b < 0 { // Right Left Case     (see figure 5)
+					N = rotate_RightLeft(X, Z) // Double rotation: Right(Z) then Left(X)
+				} else { // Right Right Case    (see figure 4)
+					N = rotate_Left(X, Z) // Single rotation Left(X)
+				}
+				// After rotation adapt parent link
+			} else {
+				if X.BalFactor == 0 {
+					X.BalFactor++ // N’s height decrease is absorbed at X.
+					break
+				}
+				N = X
+				N.BalFactor = 0 // Height(N) decreases by 1
+				continue
+			}
+		} else { // (N == right_child(X)): The right subtree decreases
+			if X.BalFactor < 0 { // X is left-heavy
+				// ===> the temporary BalanceFactor(X) == –2
+				// ===> rebalancing is required.
+				Z := X.Left // Sibling of N (higher by 2)
+				fmt.Println(X.Value)
+				b = Z.BalFactor
+				if b > 0 { // Left Right Case
+					N = rotate_LeftRight(X, Z) // Double rotation: Left(Z) then Right(X)
+				} else { // Left Left Case
+					N = rotate_Right(X, Z) // Single rotation Right(X)
+				}
+				// After rotation adapt parent link
+			} else {
+				if X.BalFactor == 0 {
+					X.BalFactor-- // N’s height decrease is absorbed at X.
+					break
+				}
+				N = X
+				N.BalFactor = 0 // Height(N) decreases by 1
+				continue
+			}
+		}
+		// After a rotation adapt parent link:
+		// N is the new root of the rotated subtree
+		N.Parent = G
+		if G != nil {
+			if X == G.Left {
+				G.Left = N
+			} else {
+				G.Right = N
+			}
+			if b == 0 {
+				break // Height does not change: Leave the loop
+			}
+		} else {
+			avl.Root = N // N is the new root of the total tree
+		}
+		// Height(N) decreases by 1 (== old Height(X)-1)
+	}
+}
+
+func (cur *Node) replaceParent(newNode *Node) {
+	if cur.Parent != nil {
+		if cur.Parent.Left == cur {
+			cur.Parent.Left = newNode
+		} else {
+			cur.Parent.Right = newNode
+		}
+	}
+	if newNode != nil {
+		newNode.Parent = cur.Parent
+	}
+}
+
+func (n *Node) delete() *Node {
+	p := n.Parent
+	if p.Left == n {
+		p.Left = nil
+	} else {
+		p.Right = nil
+	}
+	return p
+}
+
+func (n *Node) findMin(updateChild bool) *Node {
+	cur := n.Right
+	for {
+		if updateChild {
+			cur.ChildCount--
+		}
+		if cur.Left == nil {
+			return cur
+		}
+		cur = cur.Left
+	}
+}
+
+func (avl *AVL) insert(val int32) {
+	avl.size++
+	if avl.Root == nil {
+		avl.Root = &Node{Value: val}
+		return
+	}
+
+	walk := avl.Root
+	parent := walk
+	left := true
+	for walk != nil {
+		parent = walk
+		walk.ChildCount++
+		if walk.Value == val {
+			if walk.BalFactor > 0 {
+				walk = walk.Left
+				left = true
+			} else if walk.BalFactor < 0 {
+				walk = walk.Right
+				left = false
+			} else {
+				if rand.Intn(2) == 0 {
+					walk = walk.Right
+					left = false
+				} else {
+					walk = walk.Left
+					left = true
+				}
+			}
+			// Go right or left depending on bfactor or randomness
+		} else if val < walk.Value {
+			walk = walk.Left
+			left = true
+		} else {
+			walk = walk.Right
+			left = false
+		}
+	}
+	node := &Node{Value: val, Parent: parent}
+	if left {
+		parent.Left = node
+	} else {
+		parent.Right = node
+	}
+	avl.Balance(node)
+}
+
+func (avl *AVL) Balance(newNode *Node) {
+	curNode := newNode
+	parent := newNode.Parent
+	var n, g *Node
+	for parent != nil {
+		if parent.Right == curNode {
+			if parent.BalFactor > 0 {
+				// ===> the temporary BalanceFactor(X) == +2
+				// ===> rebalancing is required.
+				g = parent.Parent
+				if curNode.BalFactor < 0 { // Right Left Case
+					n = rotate_RightLeft(parent, curNode) // Double rotation: Right(Z) then Left(X)
+				} else { // Right Right Case    (see figure 4)
+					n = rotate_Left(parent, curNode) // Single rotation Left(X)
+				}
+				// After rotation adapt parent link
+			} else {
+				if parent.BalFactor < 0 {
+					parent.BalFactor = 0
+					break
+				}
+				parent.BalFactor++
+				curNode = parent
+				parent = curNode.Parent
+				continue
+			}
+		} else { // the left subtree increases
+			if parent.BalFactor < 0 { // X is left-heavy
+				// ===> the temporary BalanceFactor(X) == –2
+				// ===> rebalancing is required.
+				g = parent.Parent
+				if curNode.BalFactor > 0 { // Left Right Case
+					n = rotate_LeftRight(parent, curNode) // Double rotation: Left(Z) then Right(X)
+				} else { // Left Left Case
+					n = rotate_Right(parent, curNode) // Single rotation Right(X)
+				}
+				// After rotation adapt parent link
+			} else {
+				if parent.BalFactor > 0 {
+					parent.BalFactor = 0
+					break
+				}
+				parent.BalFactor--
+				curNode = parent
+				parent = curNode.Parent
+				continue
+			}
+		}
+		// After a rotation adapt parent link:
+		// N is the new root of the rotated subtree
+		// Height does not change: Height(N) == old Height(X)
+		n.Parent = g
+		if g != nil {
+			if parent == g.Left {
+				g.Left = n
+			} else {
+				g.Right = n
+			}
+			break
+		} else {
+			avl.Root = n
+			break
+		}
+	}
+}
+
+func rotate_Left(P, C *Node) *Node {
+	// C is by 2 higher than its sibling
+	t := C.Left
+	P.Right = t
+	if t != nil {
+		t.Parent = P
+	}
+	C.Left = P
+	P.Parent = C
+	// 1st case, BalanceFactor(C) == 0, only happens with deletion, not insertion:
+	if C.BalFactor == 0 { // t has been of same height as t4
+		P.BalFactor++
+		C.BalFactor--
+	} else { // 2nd case happens with insertion or deletion:
+		P.BalFactor = 0
+		C.BalFactor = 0
+	}
+	P.fixChildCount()
+	C.fixChildCount()
+	return C // return new root of rotated subtree
+}
+
+func rotate_Right(P, C *Node) *Node {
+	// C is by 2 higher than its sibling
+	t := C.Right
+	P.Left = t
+	if t != nil {
+		t.Parent = P
+	}
+	C.Right = P
+	P.Parent = C
+	// 1st case, BalanceFactor(C) == 0, only happens with deletion, not insertion:
+	if C.BalFactor == 0 { // t has been of same height as t4
+		P.BalFactor--
+		C.BalFactor++
+	} else { // 2nd case happens with insertion or deletion:
+		P.BalFactor = 0
+		C.BalFactor = 0
+	}
+	P.fixChildCount()
+	C.fixChildCount()
+	return C // return new root of rotated subtree
+}
+
+func rotate_RightLeft(X, Z *Node) *Node {
+	// Z is by 2 higher than its sibling
+	Y := Z.Left
+	// Y is by 1 higher than sibling
+	t3 := Y.Right
+	Z.Left = t3
+	if t3 != nil {
+		t3.Parent = Z
+	}
+	Y.Right = Z
+	Z.Parent = Y
+	t2 := Y.Left
+	X.Right = t2
+	if t2 != nil {
+		t2.Parent = X
+	}
+	Y.Left = X
+	X.Parent = Y
+	if Y.BalFactor > 0 { // t3 was higher
+		X.BalFactor--
+		Z.BalFactor = 0
+	} else if Y.BalFactor < 0 {
+		// t2 was higher
+		X.BalFactor = 0
+		Z.BalFactor++
+	} else {
+		X.BalFactor = 0
+		Z.BalFactor = 0
+	}
+	Y.BalFactor = 0
+	X.fixChildCount()
+	Z.fixChildCount()
+	Y.fixChildCount()
+	return Y // return new root of rotated subtree
+}
+
+func rotate_LeftRight(X, Z *Node) *Node {
+	// Z is by 2 higher than its sibling
+	Y := Z.Right
+	// Y is by 1 higher than sibling
+	t3 := Y.Left
+	Z.Right = t3
+	if t3 != nil {
+		t3.Parent = Z
+	}
+	Y.Left = Z
+	Z.Parent = Y
+	t2 := Y.Right
+	X.Left = t2
+	if t2 != nil {
+		t2.Parent = X
+	}
+	Y.Right = X
+	X.Parent = Y
+	if Y.BalFactor > 0 { // t3 was higher
+		X.BalFactor++
+		Z.BalFactor = 0
+	} else if Y.BalFactor < 0 {
+		// t2 was higher
+		X.BalFactor = 0
+		Z.BalFactor--
+	} else {
+		X.BalFactor = 0
+		Z.BalFactor = 0
+	}
+	Y.BalFactor = 0
+	X.fixChildCount()
+	Z.fixChildCount()
+	Y.fixChildCount()
+	return Y // return new root of rotated subtree
+}
+
+// Complete the activityNotifications function below.
+// func activityNotifications(expenditure []int32, d int32) int32 {
+
+// }
+
+func main() {
+	avl := AVL{}
+	avl.insert(40)
+	avl.insert(60)
+	avl.insert(2)
+	avl.insert(3)
+	avl.insert(1)
+	//avl.print2D()
+	avl.insert(30)
+	//avl.print2D()
+	avl.insert(70)
+	avl.insert(80)
+	avl.insert(0)
+	avl.insert(-1)
+	avl.insert(4)
+	avl.insert(5)
+	avl.insert(6)
+	avl.insert(7)
+	avl.insert(8)
+	avl.insert(9)
+	avl.insert(10)
+	avl.insert(-2)
+	avl.insert(-3)
+	avl.insert(-4)
+	avl.insert(-5)
+	avl.insert(-6)
+	avl.insert(-7)
+	avl.insert(-8)
+	avl.insert(-9)
+	avl.insert(-10)
+	avl.insert(-11)
+	avl.insert(-12)
+	avl.insert(-13)
+	avl.insert(-14)
+	//avl.Delete(-14)
+	//avl.Delete(0)
+	//avl.Delete(2)
+	// avl.Delete(1)
+	// avl.Delete(-1)
+	// avl.Delete(-9)
+	// avl.Delete(-1)
+	avl.print2D()
+	//avl.print2D()
+
+	// avl.insert(4)
+	// avl.insert(2)
+	// avl.print2D()
+	// avl.insert(3)
+	// avl.print2D()
+	// reader := bufio.NewReaderSize(os.Stdin, 1024*1024)
+
+	// stdout, err := os.Create(os.Getenv("OUTPUT_PATH"))
+	// checkError(err)
+
+	// defer stdout.Close()
+
+	// writer := bufio.NewWriterSize(stdout, 1024*1024)
+
+	// nd := strings.Split(readLine(reader), " ")
+
+	// nTemp, err := strconv.ParseInt(nd[0], 10, 64)
+	// checkError(err)
+	// n := int32(nTemp)
+
+	// dTemp, err := strconv.ParseInt(nd[1], 10, 64)
+	// checkError(err)
+	// d := int32(dTemp)
+
+	// expenditureTemp := strings.Split(readLine(reader), " ")
+
+	// var expenditure []int32
+
+	// for i := 0; i < int(n); i++ {
+	// 	expenditureItemTemp, err := strconv.ParseInt(expenditureTemp[i], 10, 64)
+	// 	checkError(err)
+	// 	expenditureItem := int32(expenditureItemTemp)
+	// 	expenditure = append(expenditure, expenditureItem)
+	// }
+
+	// result := activityNotifications(expenditure, d)
+
+	// fmt.Fprintf(writer, "%d\n", result)
+
+	// writer.Flush()
+}
+
+func readLine(reader *bufio.Reader) string {
+	str, _, err := reader.ReadLine()
+	if err == io.EOF {
+		return ""
+	}
+
+	return strings.TrimRight(string(str), "\r\n")
+}
+
+func checkError(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
